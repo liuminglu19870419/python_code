@@ -40,7 +40,7 @@ def get_html(url):
     else:
         return None, None, None
 
-
+    
 def save_file(file_name, *args):
     fp = open(file_name, 'w')
     for arg in args[0]:
