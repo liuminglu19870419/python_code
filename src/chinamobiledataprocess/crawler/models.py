@@ -12,6 +12,7 @@ import json
 from selenium.webdriver import PhantomJS
 import os
 from selenium.selenium import selenium
+from chinamobiledataprocess.crawler.daemon import Daemon
 
 _LOGGER = logging.getLogger('crawler')
 
@@ -161,6 +162,19 @@ class CrawlWorker(object):
             else:
                 time.sleep(5)
     
+    def __process(self, msg):
+        '''
+        process the msg
+        '''
+        if 'url' not in msg:
+            _LOGGER.error('un support msg type')
+            return
+        html = self.__download(msg['url'])
+        if html != None:
+            self.__save_file(html)
+            self.__save_info(msg)
+        self._rabbitmq_client.ack(msg['__delivery_tag'])
+    
     def __save_file(self, html_buffer):
         '''
         save the html_buffer to fdfs
@@ -181,30 +195,3 @@ class CrawlWorker(object):
         save the html info to mongodb
         '''
         pass
-
-    def __get_message(self):
-        '''
-        get a message from rabbitmq
-        '''
-        pass
-    
-    def __process(self, msg):
-        '''
-        process the msg
-        '''
-        pass
-
-
-class Crawler:
-    '''
-    crawl the html in multi processes
-    '''
-    def __init__(self, process_count, rabbit_mq_host, mongo_host, fdfs_conf):
-        self.__rabbit_mq_host = rabbit_mq_host
-        self.__mongo_host = mongo_host
-        self.__fdfs_conf = fdfs_conf
-        self.__process_count = process_count 
-    
-    def mp_start(self):
-        pass
-
