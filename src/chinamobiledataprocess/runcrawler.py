@@ -25,7 +25,7 @@ class Crawler(Daemon):
         self.__fdfs_conf =  settings.FASTDFS_CLIENT_CONF
         self.__process_count = settings.PROCESS_COUNT 
         self.__phantomjs = settings.PHANTOMJS_PATH
-    
+
     def run(self):
         crawler_workers = [] 
         for i in range(self.__process_count):
@@ -36,7 +36,7 @@ class Crawler(Daemon):
 
         for item in crawler_workers:
             item.start() 
-        
+
         for item in crawler_workers:
             item.join()
 
