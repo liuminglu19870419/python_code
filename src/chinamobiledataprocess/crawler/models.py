@@ -12,6 +12,7 @@ import json
 from selenium.webdriver import PhantomJS
 import os
 from selenium.selenium import selenium
+from Image import NONE
 
 _LOGGER = logging.getLogger('crawler')
 
@@ -66,7 +67,8 @@ class RabbitmqClient(object):
         self.__rabbitmq_channel.basic_ack(delivery_tag=delivery_tag)
 
     def close(self):
-        self.__rabbitmq_connection.close()
+        if self.__rabbit_mq_host != None:
+            self.__rabbitmq_connection.close()
 
 
 def reliable_op_for_phant(fun):
@@ -82,20 +84,10 @@ def reliable_op_for_phant(fun):
                 _LOGGER.error(err)
                 _LOGGER.error(traceback.format_exc())
                 self = args[0]
-
                 close_func = getattr(self, 'close')
-                try:
-                    close_func()
-                except Exception, err:
-                    _LOGGER.error('quit phantomjs error %s' % err)
-                    _LOGGER.error(traceback.format_exc())
-
+                close_func()
                 init_func = getattr(self, "_init")
-                try:
-                    init_func()
-                except Exception, err:
-                    _LOGGER.error('init phantomjs error %s' % err)
-                    _LOGGER.error(traceback.format_exc())
+                init_func()
                 time.sleep(5)
     return restart_phantomjs
 
@@ -109,7 +101,11 @@ class DownLoadUrl(object):
         self._init()
 
     def _init(self):
-        self._webdriver = PhantomJS(executable_path=self.__phantomjs, port=self.__port)
+        try:
+            self._webdriver = PhantomJS(executable_path=self.__phantomjs, port=self.__port)
+        except Exception, err:
+            _LOGGER.error('init phantomjs error %s', err)
+            _LOGGER.error(traceback.format_exc())
 
     @reliable_op_for_phant
     def get_html(self, url):
@@ -117,7 +113,8 @@ class DownLoadUrl(object):
         return self._webdriver.page_source
 
     def close(self):
-        self._webdriver.quit()
+        if self._webdriver != None:
+            self._webdriver.quit()
 
 
 class CrawlWorker(object):
@@ -125,22 +122,15 @@ class CrawlWorker(object):
     crawle html worker 
     '''
     def __init__(self, stop_event, rabbit_mq_host, mongo_host, fdfs_conf, phantomjs_path, phantomjs_port):
-        selenium.set_timeout(10)
-        self.__rabbit_mq_host = rabbit_mq_host
-        self.__mongo_host = mongo_host
-        self.__fdfs_conf = fdfs_conf
-        self.__stop_event = stop_event 
-        self.__phantomjs = phantomjs_path
-        self.__phantomjs_port = phantomjs_port
-        self._init()
-
-    def _init(self):
         '''
         initialize the crawl worker, make the connection to rabbitmq, fdfs, mongodb
         '''
-        self._rabbitmq_client = RabbitmqClient(self.__rabbitmq_host)
-        self._crawler = DownLoadUrl(self.__phantomjs, port = self.__phantomjs_port)
-        
+        selenium.set_timeout(10)
+        self._rabbitmq_client = RabbitmqClient(rabbit_mq_host)
+        self._crawler = DownLoadUrl(phantomjs_path, phantomjs_port)
+        self._fdfs_client = None
+        self._mongo_client = None
+        self.__stop_event = stop_event 
 
     def stop(self):
         '''
