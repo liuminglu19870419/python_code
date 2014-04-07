@@ -5,8 +5,8 @@
 '''
 from selenium import webdriver
 if __name__ == '__main__':
-    driver = webdriver.PhantomJS()
-    driver.get('http://www.newsmth.net/bbstcon.php?board=Divorce&gid=203828')
+    driver = webdriver.PhantomJS('/home/mingliu/phantomjs')
+    driver.get('http://www.baidu.com')
     data = driver.title
     print data
     elem = driver.page_source
