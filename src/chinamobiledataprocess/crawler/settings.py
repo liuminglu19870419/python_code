@@ -3,14 +3,18 @@ Created on 2014-04-05
 
 @author: liuminglu
 '''
-import logging
 from logging import config
-import os
 
 PHANTOMJS_PATH = '/home/mingliu/phantomjs'
 LOG_PATH = '/home/mingliu/git/python_code/'
 FASTDFS_CLIENT_CONF = ''
+MONGO_HOST = ''
+MONGO_PORT = ''
 RABBITMQ_SERVER = 'localhost'
+PID_PATH = '/var/run/crawler.pid'
+PROCESS_COUNT = 3
+
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers':False,
@@ -42,7 +46,7 @@ LOGGING = {
             'class':'logging.handlers.RotatingFileHandler',
             'formatter': 'message_only',
             'filename': LOG_PATH + '/crawler_perf.log',
-            'maxBytes': 30 * 1024 * 1024, # 30MB
+            'maxBytes': 30 * 1024 * 1024,  # 30MB
             'backupCount' : 30
         },
         'err':{
