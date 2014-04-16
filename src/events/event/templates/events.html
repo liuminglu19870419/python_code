@@ -1,0 +1,32 @@
+<html>
+<head>
+<title>事件详情</title>
+</head>
+<body>
+<h3>Valid events detail for {{ time_str }}</h3>
+<table border="2" cellpadding="10" cellspacing="0">
+    <tr>
+        <th>分数</th><th>事件ID</th><th>标题</th><th>新闻数量</th><th>新闻数量得分</th><th>最近更新间隔</th><th>最近更新间隔得分</th>
+        <th>更新数量</th><th>更新数量得分</th>
+    </tr>
+    {% for event in events %}
+    <tr>
+        <td rowspan="5">{{ event.score }}</td><td rowspan="5">{{ event.eid }}</td><td rowspan="5">{{ event.title }}</td><td rowspan="5">{{ event.meta.count }}</td><td rowspan="5">{{ event.meta.count_score }}</td>
+        <td rowspan="5">{{ event.meta.delta }}</td><td rowspan="5">{{ event.meta.delta_score }}</td>
+    </tr>
+    <tr>
+        <td>{{ event.meta.update.0.count }}</td><td>{{ event.meta.update.0.score }}</td>
+    </tr>
+    <tr>
+        <td>{{ event.meta.update.1.count }}</td><td>{{ event.meta.update.1.score }}</td>
+    </tr>
+    <tr>
+        <td>{{ event.meta.update.2.count }}</td><td>{{ event.meta.update.2.score }}</td>
+    </tr>
+    <tr>
+        <td>{{ event.meta.update.3.count }}</td><td>{{ event.meta.update.3.score }}</td>
+    </tr>
+    {% endfor %}
+</table>
+</body>
+</html>

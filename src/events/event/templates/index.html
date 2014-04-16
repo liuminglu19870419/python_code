@@ -1,0 +1,20 @@
+<html>
+<head>
+<title>热门事件</title>
+</head>
+<body>
+<table border="2" cellpadding="10" cellspacing="0">
+    <tr>
+        <th>Time</th><th>Event Id</th><th>Title</th><th>Score</th>
+    </tr>
+    {% for event in hot_events %}
+    <tr>
+        <td>{{ event.time_str }}</td>
+        <td><a href="/app/events/detail?time={{ event.time_str }}" target="_blank">{{ event.eid }}</a></td>
+        <td>{{ event.title }}</td>
+        <td>{{ event.score }}</td>
+    </tr>
+    {% endfor %}
+</table>
+</body>
+</html>

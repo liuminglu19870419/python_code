@@ -1,0 +1,49 @@
+
+
+How to adjust parameters:
+1. dump all the infos from online database;
+2. save all the infos into local database;
+3. run index_doc for every published info to get events related infos;
+4. write scripts to calculate event score for every interval:
+    a. simulate run time with timestamp;
+    b. get all events related infos for the specific timestamp;
+    c. calculate score for every events
+    d. get top event in all the events, save into database. 
+        i. If the event is same with previous event, check whether have new milestones. If have, record as a new record in notifications.
+        ii. if the event is not same with the previous event, record as a new record in notifications.
+5. adjust parameter by evaluating the results.
+
+计算事件热度的公式：
+1. 有如下几个因素：
+    a. 事件中的新闻数量
+    b. 事件的最后更新时间和当前时间的差值
+    c. 事件的更新频率
+    d. 事件中milestone的数量
+    e. 事件中新闻的点击量
+2. 各个因素的权重：
+    a. 新闻数量不是很重要
+    b. 事件的最后更新时间和当前时间的差值，这个应该是非常重要的一个因子
+    c. 事件的更新频率，尤其是在最近一段时间的更新频率，也是一个非常重要的因子
+    d. mileston的数量，不是非常重要，但是比新闻数量要重要
+    e. 点击量，目前可以先不引入
+    总结，各个因素的权重排序：事件在最近一段时间内的更新频率 > 事件的最后更新时间和当前时间的差值 > milestone的数量 > 事件中的新闻数量 > 时间中新闻的点击量
+3. 各个因素和结果的关系：
+    a. 新闻数量，由于不是很重要，考虑对数关系
+    b. 最后更新时间和当前时间的差值：先考虑线性关系吧
+    c. 事件在最近一段时间内的更新频率：先考虑线性关系，但是由于比b中列出的权值要高，因此系数应该比b要高
+    d. mileston的数量：先不引入
+    e. 点击量：先不引入
+4. 公式：
+    score = P1 * log(P2)N + P3 / D + P4 * F
+    其中：
+        P1, P2, P3, P4为参数
+        N为事件中的新闻数量
+        D为事件最后更新时间和当前时间的差值。由于计算时只计算最近一段时间内的事件，因此取值有范围。
+        F为事件在最近一段时间内的更新频率。这个怎么求得？
+5. 结果归一化
+    为了对每次结果进行比较，应该对结果进行归一化，保证不受时间等其他因素影响。
+6. 计算策略
+    在events表中加上lastModify，表示事件的最后更新时间。每次计算events分数时，只计算在最近一段时间内有更新的事件（比如最近一天有更新的事件），超过给定时间的事件，默认不会是热门事件。
+
+TODO
+1. Different weight for categories.
