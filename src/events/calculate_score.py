@@ -7,15 +7,20 @@ This module is for calculating score of events offline.
 '''
 import math
 import pymongo
+import time as timer
 from datetime import datetime
 
-_CALCULATE_INTERVAL = 24 * 60 * 60 * 1000 * 1000 # seconds
-_LATEST_EVENT_INTERVAL = 1 * 24 * 60 * 60 * 1000 * 1000 # 1 day, in seconds
+_CALCULATE_INTERVAL = 24 * 60 * 60 * 1000 * 1000  # seconds
+_LATEST_EVENT_INTERVAL = 1 * 24 * 60 * 60 * 1000 * 1000  # 1 day, in seconds
 
 _EVENT_INFO_COUNT_THRESHOLD = 5
 
+_EVENT_TIME_LINE = 5 * 60 * 60 #only the event modified after this time line will be calc
+_TRAIN_INFO_TIME_LINE = 1  * 24 * 60 * 60 #only the info happened after this time line will be calc
+_TRAIN_MID_TIME_LINE = 1  * 24 * 60 * 60 #only the mid happened after this time line will be calc
+
 def _connect():
-    con = pymongo.Connection('127.0.0.1')
+    con = pymongo.Connection('10.2.8.219')
     return con['weibo']
 
 def _get_start_end_time(db):
@@ -44,27 +49,9 @@ def _get_event_last_modify(eid, db):
     '''
     Get last modify time of the given event
     '''
-    infos = db.infos.find({'eid': eid}, {'_id': 1}, sort=[('_id', pymongo.DESCENDING),], limit=1)
+    infos = db.infos.find({'eid': eid}, {'_id': 1}, sort=[('_id', pymongo.DESCENDING), ], limit=1)
     info = infos[0]
     return info['_id']
-
-def _get_event_valid_infos(time, event, db):
-    '''
-    Get infos dids in event before the given time
-    '''
-    infos = db.infos.find({'eid': event['_id'], '_id': {'$lte': time}}, {'_id': 1})
-    return [info['_id'] for info in infos]
-
-def _get_event_valid_mids(time, event, db):
-    '''
-    Get event milestones before the given time
-    '''
-    mids = []
-    for mid in event['mids']:
-        info = db.infos.find_one({'did': mid}, {'_id': 1})
-        if info['_id'] <= time:
-            mids.append(mid)
-    return mids
 
 def _valid_event(event, time, db):
     '''
@@ -80,6 +67,41 @@ def _valid_event(event, time, db):
     if count < _EVENT_INFO_COUNT_THRESHOLD:
         return False
     return True
+
+def _get_event_valid_infos(time, event, db):
+    '''
+    Get infos dids in event before the given time
+    '''
+    infos = db.infos.find({'eid': event['_id'], '_id': {'$gte': time}}, {'_id': 1})
+    return [info['_id'] for info in infos]
+
+def _get_event_valid_mids(time, event, db):
+    '''
+    Get event milestones before the given time
+    '''
+    mids = []
+    for mid in event['mids']:
+        info = db.infos.find_one({'did': mid}, {'_id': 1})
+        if info['_id'] >= time:
+            mids.append(mid)
+    return mids
+
+
+def _get_modified_events(start_time, db):
+    '''
+    Get events which changed during the start_time and end_time
+    '''
+    start = timer.time()
+    events = db.events.find({'lastModify': {'$gte': start_time}})
+    print timer.time() - start
+    time = start_time * 1000 * 1000
+    valid_events = []
+    for event in events:
+        event['infos'] = _get_event_valid_infos(time - _TRAIN_INFO_TIME_LINE * 1000 * 1000, event, db)
+        event['mids'] = _get_event_valid_mids(time - _TRAIN_MID_TIME_LINE* 1000 * 1000, event, db)
+        if len(event['infos']) > _EVENT_INFO_COUNT_THRESHOLD:
+            valid_events.append(event)
+    return valid_events
 
 def _get_events(time, max_did, db):
     '''
@@ -111,6 +133,7 @@ def _calculate_event_score(event, time):
     score = 0.0
     info_count = len(event['infos'])
     meta['count'] = info_count
+    print  info_count
     meta['count_score'] = math.log(info_count, P2)
     if info_count > 0:
         score += P1 * math.log(info_count, P2)
@@ -119,7 +142,7 @@ def _calculate_event_score(event, time):
     # add score of latest update
     latest_id = max(event['infos'])
     delta = time - latest_id
-    meta['delta'] = delta / 1000 / 1000 # detal in seconds
+    meta['delta'] = delta / 1000 / 1000  # detal in seconds
     meta['delta_score'] = P3 / delta
     if delta > 0:
         score += P3 / delta
@@ -135,7 +158,7 @@ def _calculate_event_score(event, time):
         score += P4 * count * (4 - i)
     return score, meta
 
-def _get_hot_event(events, time, db):
+def _get_hot_event(events, time):
     '''
     Get hot event:
     1. calculate score for all events
@@ -143,18 +166,15 @@ def _get_hot_event(events, time, db):
     '''
     hot_event = None
     max_score = 0.0
+    event_list = []
     for event in events:
         score, meta = _calculate_event_score(event, time)
-        db.validEvents.save({
-            'eid': event['_id'],
-            'time': datetime.utcfromtimestamp(time / 1000 / 1000),
-            'score': score,
-            'meta': meta,
-        })
+        event_list.append((event, score, meta))
         if score > max_score:
             max_score = score
             hot_event = event
-    return hot_event, max_score
+    sorteditem = sorted(event_list, key=lambda a: a[1], reverse=True)
+    return sorteditem[0:10]
 
 def _process_hot_event(event, score, time, db):
     '''
@@ -170,28 +190,21 @@ def _process_hot_event(event, score, time, db):
     print 'count: %s' % len(event['infos'])
     print 'mids count: %s' % len(event['mids'])
     print '#' * 20
-    db.hotEvents.save({'eid': event['_id'], '_id': datetime.utcfromtimestamp(time / 1000 / 1000), 'score': score, \
-            'title': info['news']['title'], 'event': event, 'count': len(event['infos']), 'midsCount': len(event['mids'])})
 
 def main():
     db = _connect()
-    start_time, end_time = _get_start_end_time(db)
-    # set start time, start from 2013/10/1
-    start_time = 1380585600000000
-    time = start_time + _CALCULATE_INTERVAL
-    # calculate top events of specific time
-    count = 0
-    while time < end_time:
-        # get max did of given time
-        max_did = _get_top_did(time, db)
-        # get all events and infos in events of the given time
-        events = _get_events(time, max_did, db)
-        print time
-        print len(events)
-        hot_event, score = _get_hot_event(events, time, db)
-        _process_hot_event(hot_event, score, time, db)
-        count += 1
-        time += _CALCULATE_INTERVAL
+    start_time = int(timer.time() - _EVENT_TIME_LINE)
+    time = start_time * 1000 * 1000
+    print start_time
+    events = _get_modified_events(start_time, db)
+    sorted_events = _get_hot_event(events, time)
+    for event in sorted_events:
+        print event
+        _process_hot_event(event[0], event[1], time, db)
 
 if __name__ == '__main__':
+#     main()
+    start = timer.time()
     main()
+    end = timer.time() - start 
+    print 'process time: %s' % end
