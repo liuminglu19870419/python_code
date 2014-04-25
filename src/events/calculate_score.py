@@ -9,15 +9,22 @@ import math
 import pymongo
 import time as timer
 from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import temp
 
 _CALCULATE_INTERVAL = 24 * 60 * 60 * 1000 * 1000  # seconds
 _LATEST_EVENT_INTERVAL = 1 * 24 * 60 * 60 * 1000 * 1000  # 1 day, in seconds
 
 _EVENT_INFO_COUNT_THRESHOLD = 5
 
-_EVENT_TIME_LINE = 5 * 60 * 60 #only the event modified after this time line will be calc
-_TRAIN_INFO_TIME_LINE = 1  * 24 * 60 * 60 #only the info happened after this time line will be calc
-_TRAIN_MID_TIME_LINE = 1  * 24 * 60 * 60 #only the mid happened after this time line will be calc
+_EVENT_TIME_LINE = 12 * 60 * 60  # only the event modified after this time line will be calc
+_TRAIN_INFO_TIME_LINE = 5 * 24 * 60 * 60  # only the info happened after this time line will be calc
+_TRAIN_MID_TIME_LINE = 14 * 24 * 60 * 60  # only the mid happened after this time line will be calc
+mails = ['mlliu@bainainfo.com', 'fli@bainainfo.com', 'qwang@bainainfo.com', 'jzheng@bainainfo.com', \
+          'jwang@bainainfo.com', 'lzhang@bainainfo.com', 'prong@bainainfo.com', 'yyu@bainainfo.com', \
+          'yfjiang@bainainfo.com', 'zxzhang@bainainfo.com']
 
 def _connect():
     con = pymongo.Connection('10.2.8.219')
@@ -86,6 +93,10 @@ def _get_event_valid_mids(time, event, db):
             mids.append(mid)
     return mids
 
+def _get_event_duration_time(event, db):
+    info = db.infos.find_one({'eid':event['_id']}, sort=[('_id', pymongo.ASCENDING)])
+    return timer.time() - info['_id'] / 1000000
+
 
 def _get_modified_events(start_time, db):
     '''
@@ -97,8 +108,11 @@ def _get_modified_events(start_time, db):
     time = start_time * 1000 * 1000
     valid_events = []
     for event in events:
+        event['duration_time'] = _get_event_duration_time(event, db)
         event['infos'] = _get_event_valid_infos(time - _TRAIN_INFO_TIME_LINE * 1000 * 1000, event, db)
-        event['mids'] = _get_event_valid_mids(time - _TRAIN_MID_TIME_LINE* 1000 * 1000, event, db)
+        event['mids'] = _get_event_valid_mids(time - _TRAIN_MID_TIME_LINE * 1000 * 1000, event, db)
+#         if event['cid'] == 103 or event['cid'] == 104 or event['cid'] == 108:
+#             continue
         if len(event['infos']) > _EVENT_INFO_COUNT_THRESHOLD:
             valid_events.append(event)
     return valid_events
@@ -126,37 +140,64 @@ def _calculate_event_score(event, time):
     P2 = 10
     P3 = 86400 * 1000 * 1000 * 5
     P4 = 10
-
+    P_UPDATE_FREQUENCE_WEIGHT_ALPHA = 0.75
+    P_UPDATE_FREQUENCE_BASE = 6
     meta = {}
 
-    # add score of infos count
     score = 0.0
+
+    # add score of infos count
     info_count = len(event['infos'])
+    total_info_count = event['count']
+    mid_count = len(event['mids'])
     meta['count'] = info_count
-    print  info_count
     meta['count_score'] = math.log(info_count, P2)
     if info_count > 0:
-        score += P1 * math.log(info_count, P2)
+        coffecient = info_count * total_info_count / event['duration_time']
     else:
         raise Exception('Info count is 0 while calculating event score')
-    # add score of latest update
-    latest_id = max(event['infos'])
-    delta = time - latest_id
-    meta['delta'] = delta / 1000 / 1000  # detal in seconds
-    meta['delta_score'] = P3 / delta
-    if delta > 0:
-        score += P3 / delta
+
     # add score of update frequency
     meta['update'] = {}
-    for i in range(4):
+    hour = timer.localtime(timer.time()).tm_hour
+#     print 'hour %s' % hour
+    P_UPDATE_FREQUENCE_BASE = int(math.ceil(P_UPDATE_FREQUENCE_BASE * temp.hour_strategy[str(hour)]))
+    for i in range(P_UPDATE_FREQUENCE_BASE):
         to_time = time - i * 6 * 60 * 60 * 1000 * 1000
         from_time = time - (i + 1) * 6 * 60 * 60 * 1000 * 1000
         count = len([info for info in event['infos'] if info <= to_time and info > from_time ])
         meta['update']['%s' % i] = {}
         meta['update']['%s' % i]['count'] = count
-        meta['update']['%s' % i]['score'] = P4 * count * (4 - i)
-        score += P4 * count * (4 - i)
+        meta['update']['%s' % i]['score'] = count * (P_UPDATE_FREQUENCE_WEIGHT_ALPHA ** i)
+        score += meta['update']['%s' % i]['score']
+    score = coffecient * score
     return score, meta
+
+def _key_cmp(key1, key2):
+    if key1[0]['cid'] == key2[0]['cid']:
+        if key1[1] > key2[1]:
+            return 1
+        if key1[1] == key2[1]:
+            return 0
+        if key1[1] < key2[1]:
+            return -1
+    if key1[0]['cid'] > key2[0]['cid']:
+        return 1
+    if key1[0]['cid'] < key2[0]['cid']:
+        return -1
+
+def _key_cmp1(key1, key2):
+    if key1[0]['cid'] == key2[0]['cid']:
+        if key1[1] > key2[1]:
+            return 1
+        if key1[1] == key2[1]:
+            return 0
+        if key1[1] < key2[1]:
+            return -1
+    if temp.category_weight[str(key1[0]['cid'])] > temp.category_weight[str(key2[0]['cid'])]:
+        return 1
+    if temp.category_weight[str(key1[0]['cid'])] < temp.category_weight[str(key2[0]['cid'])]:
+        return -1
 
 def _get_hot_event(events, time):
     '''
@@ -164,19 +205,15 @@ def _get_hot_event(events, time):
     1. calculate score for all events
     2. get event with highest score and score lager than threadhold
     '''
-    hot_event = None
-    max_score = 0.0
     event_list = []
     for event in events:
         score, meta = _calculate_event_score(event, time)
         event_list.append((event, score, meta))
-        if score > max_score:
-            max_score = score
-            hot_event = event
     sorteditem = sorted(event_list, key=lambda a: a[1], reverse=True)
-    return sorteditem[0:10]
+#     sorteditem = sorted(event_list, cmp=_key_cmp1, reverse=True)
+    return sorteditem
 
-def _process_hot_event(event, score, time, db):
+def _process_hot_event(event, score, score_detail, time, db):
     '''
     Process hot event:
     1. print out hot event
@@ -185,25 +222,76 @@ def _process_hot_event(event, score, time, db):
     if event is None:
         return
     info = db.infos.find_one({'did': event['_id']})
-    print 'Got hot event: %s with score %s' % (event['_id'], score)
-    print 'title: %s' % (info['news']['title'].encode('utf-8'))
-    print 'count: %s' % len(event['infos'])
-    print 'mids count: %s' % len(event['mids'])
-    print '#' * 20
+    final_result = 'Got hot event: %s with score %s\n<br>' % (event['_id'], score)
+    if score_detail != None:
+#         final_result += 'delta_score %s' % (score_detail['delta_score']) + '\tcount score%s \n<br>' % (score_detail['count_score'])
+        items = score_detail['update'].items()
+        items = sorted(items, key=lambda a: a[0])
+        result = ''
+        k = 0
+        for item in items:
+            k += 1
+            result += 'timeline level %s, count %s score %s \t' % (item[0], item[1]['count'], item[1]['score'])
+            if k % 2 == 0:
+                final_result += result + '\n<br>'
+                result = ''
+    new_info = db.infos.find_one({'eid':event['_id']}, sort=[('_id', pymongo.DESCENDING)])
+    final_result += 'init title: %s \n<br>' % (info['news']['title'].encode('utf-8'))
+    final_result += 'latest title: %s \n<br>' % (new_info['news']['title'].encode('utf-8'))
+    final_result += 'count: %s \n<br>' % len(event['infos'])
+    final_result += 'mids count: %s\n<br>' % len(event['mids'])
+    final_result += 'cid %s ' % event['cid']
+    final_result += 'duration time: %s\t total count: %s\n<br>' % (event['duration_time'], event['count'])
+    final_result += '#' * 20
+    final_result += '\n<br>\r'
+    return final_result
+
+def _send_mail(text):
+    user = 'reporst@gmail.com'
+    passwd = 'reporstP@55'
+    for to in mails:
+#         to = ';'.join(mails)
+        msg = MIMEMultipart('alternative')
+        msg['To'] = to
+        msg['From'] = 'mlliu<' + user + '>'
+        msg[ 'Subject'] = 'host event in %s' % timer.strftime('%Y-%m-%d %H:%M:%S', timer.localtime(timer.time()))
+        part = MIMEText(text, 'html', 'utf-8')
+        msg.attach(part)
+        s = smtplib.SMTP('smtp.gmail.com', 587)
+        s.starttls()
+        s.ehlo()
+        s.login(user, passwd)
+        s.sendmail(msg['From'], to, msg.as_string())
+        s.quit()
+   
 
 def main():
     db = _connect()
+    global _EVENT_TIME_LINE
+    hour = timer.localtime(timer.time()).tm_hour
+    _EVENT_TIME_LINE = _EVENT_TIME_LINE * temp.hour_strategy[str(hour)]
     start_time = int(timer.time() - _EVENT_TIME_LINE)
+    print _EVENT_TIME_LINE
     time = start_time * 1000 * 1000
-    print start_time
     events = _get_modified_events(start_time, db)
+    print 'length %s' % len(events)
     sorted_events = _get_hot_event(events, time)
+    result = ''
+    current_cid = 0
     for event in sorted_events:
-        print event
-        _process_hot_event(event[0], event[1], time, db)
+        if event[0]['cid'] != current_cid:
+                current_cid = event[0]['cid']
+                result += '*' * 100 + '\n<br>'
+        result += _process_hot_event(event[0], event[1], event[2], time, db)
+        result += '\n<br>'
+    print result
+
+
+
+
+#     _send_mail(result)
 
 if __name__ == '__main__':
-#     main()
     start = timer.time()
     main()
     end = timer.time() - start 
