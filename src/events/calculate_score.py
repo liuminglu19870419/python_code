@@ -13,18 +13,20 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import temp
-
-_CALCULATE_INTERVAL = 24 * 60 * 60 * 1000 * 1000  # seconds
-_LATEST_EVENT_INTERVAL = 1 * 24 * 60 * 60 * 1000 * 1000  # 1 day, in seconds
+import logging
 
 _EVENT_INFO_COUNT_THRESHOLD = 5
 _EVENT_MODIFY_COUNT = 5
+_OUT_EVENTS_COUNT = 10
 _EVENT_TIME_LINE = 12 * 60 * 60  # only the event modified after this time line will be calc
 _TRAIN_INFO_TIME_LINE = 5 * 24 * 60 * 60  # only the info happened after this time line will be calc
 _TRAIN_MID_TIME_LINE = 14 * 24 * 60 * 60  # only the mid happened after this time line will be calc
 mails = ['mlliu@bainainfo.com', 'fli@bainainfo.com', 'qwang@bainainfo.com', 'jzheng@bainainfo.com', \
           'jwang@bainainfo.com', 'lzhang@bainainfo.com', 'prong@bainainfo.com', 'yyu@bainainfo.com', \
           'yfjiang@bainainfo.com', 'zxzhang@bainainfo.com']
+_LOGGER = logging.getLogger("test")
+_LOGGER.setLevel(logging.DEBUG)
+_LOGGER.addHandler(logging.StreamHandler())
 
 def _connect(host):
     con = pymongo.Connection(host)
@@ -60,21 +62,6 @@ def _get_event_last_modify(eid, db):
     info = infos[0]
     return info['_id']
 
-def _valid_event(event, time, db):
-    '''
-    Is valid event:
-    1. last modify in 24 hours
-    2. infos count lager than threshold
-    '''
-    last_modify = _get_event_last_modify(event['_id'], db)
-    if last_modify < time - _LATEST_EVENT_INTERVAL:
-        return False
-    # event news count in one day
-    count = db.infos.find({'eid': event['_id'], '_id': {'$lte': time, '$gte': time - _LATEST_EVENT_INTERVAL}}).count()
-    if count < _EVENT_INFO_COUNT_THRESHOLD:
-        return False
-    return True
-
 def _get_event_valid_infos(time, event, db):
     '''
     Get infos dids in event before the given time
@@ -97,6 +84,49 @@ def _get_event_duration_time(event, db):
     info = db.infos.find_one({'eid':event['_id']}, sort=[('_id', pymongo.ASCENDING)])
     return timer.time() - info['_id'] / 1000000
 
+def _get_train_modified_events(start_time, db):
+    end_time = start_time - _EVENT_TIME_LINE
+    start_time = start_time * 1000 * 1000
+    end_time = int(end_time * 1000 * 1000)
+    infos = db.infos.find({'_id':{'$gte': end_time, '$lte':start_time}, 'eid':{'$exists':True}})
+    events = []
+    for info in infos:
+        events.append(info['eid'])
+    events = set(events)
+    _LOGGER.debug(events)
+    valid_event = []
+    for key in events:
+        event = {}
+        event['_id'] = key
+        event['count'] = _get_event_count_train(start_time, event, db)
+        if event['count'] < _EVENT_INFO_COUNT_THRESHOLD:
+            continue
+        end_time = start_time - _TRAIN_INFO_TIME_LINE * 1000 * 1000
+        event['infos'] = _get_event_valid_infos_train(start_time, end_time, event, db)
+        _LOGGER.debug(len(event['infos']))
+        event['cid'] = db.infos.find_one({'eid':key})['cid']
+        end_time = start_time - _TRAIN_MID_TIME_LINE * 1000 * 1000
+        event['mids'] = _get_event_valid_mids_train(start_time, end_time, event, db)
+        event['duration_time'] = _get_event_duration_time_train(start_time, event, db)
+        valid_event.append(event)
+    return valid_event
+
+def _get_event_valid_infos_train(start_time, end_time, event, db):
+    infos = db.infos.find({'_id':{'$gte': end_time, '$lte': start_time}, 'eid':event['_id']})
+    return [info['_id'] for info in infos]
+
+def _get_event_valid_mids_train(start_time, end_time, event, db):
+    return []
+
+def _get_event_duration_time_train(start_time, event, db):
+    info = db.infos.find_one({'eid': event['_id']}, sort=[('_id', pymongo.ASCENDING)])
+    _LOGGER.debug(timer.localtime(info['_id'] / 1000000))
+    return int(start_time - info['_id'])
+
+def _get_event_count_train(start_time, event, db):
+    count = db.infos.find({'_id':{'$lte': start_time}, 'eid':event['_id']}).count()
+    _LOGGER.debug(count)
+    return count
 
 def _get_modified_events(start_time, db):
     '''
@@ -115,26 +145,12 @@ def _get_modified_events(start_time, db):
             valid_events.append(event)
     return valid_events
 
-def _get_events(time, max_did, db):
-    '''
-    Get events and infos in events of the given time by max did
-    '''
-    # find all events before the given time
-    events = db.events.find({'_id': {'$lte': max_did}})
-    valid_events = []
-    for event in events:
-        # get event last modify time
-        if _valid_event(event, time, db):
-            event['infos'] = _get_event_valid_infos(time, event, db)
-            event['mids'] = _get_event_valid_mids(time, event, db)
-            valid_events.append(event)
-    return valid_events
-
 def _calculate_event_score(event, time):
     '''
     Calculate event score
     '''
 
+    time = time * 1000 * 1000
     P_UPDATE_FREQUENCE_WEIGHT_ALPHA = 1.1
     P_UPDATE_FREQUENCE_BASE = 6
     P_UPDATE_TIME_DELTA = 2
@@ -145,20 +161,16 @@ def _calculate_event_score(event, time):
     # add score of infos count
     info_count = len(event['infos'])
     total_info_count = event['count']
-    mid_count = len(event['mids'])
+#     mid_count = len(event['mids'])
     meta['count'] = info_count
     if info_count > 0:
-        coffecient = info_count * total_info_count / event['duration_time']
+        coffecient = info_count * total_info_count / (event['duration_time'] / 1000000.0)
     else:
         raise Exception('Info count is 0 while calculating event score')
 
     # add score of update frequency
     meta['update'] = {}
-    hour = timer.localtime(timer.time()).tm_hour
-#     print 'hour %s' % hour
-#     P_UPDATE_FREQUENCE_BASE = int(math.ceil(P_UPDATE_FREQUENCE_BASE * temp.hour_strategy[str(hour)]))
     P_UPDATE_FREQUENCE_BASE = int(_EVENT_TIME_LINE / 60 / 60) * P_UPDATE_FREQUENCE_BASE
-    time = long(time + _EVENT_TIME_LINE * 1000 * 1000)
     for i in range(P_UPDATE_FREQUENCE_BASE):
         to_time = time - i * 60 * 60 * 1000 * 1000 * P_UPDATE_TIME_DELTA
         from_time = time - (i + 1) * 60 * 60 * 1000 * 1000 * P_UPDATE_TIME_DELTA
@@ -213,10 +225,38 @@ def _get_hot_event(events, time):
     event_list = []
     for event in events:
         score, meta = _calculate_event_score(event, time)
-        event_list.append((event, score, meta))
+        event_list.append([event, score, meta])
 #     sorteditem = sorted(event_list, key=lambda a: a[1], reverse=True)
+    cids = {}
+    for event in events:
+        cid = cids.get(event['cid'], None)
+        if cid == None:
+            cids[event['cid']] = 1.
+        else:
+            cids[event['cid']] += 1.
+    event_len = len(events)
+
+    for cid in cids.keys():
+        weight = math.ceil(_OUT_EVENTS_COUNT * cids[cid] / event_len)
+        cids[cid] = weight
+        _LOGGER.debug(weight)
+    for event in event_list:
+        event[1] = event[1] / cids[event[0]['cid']]
+
+    result_event = []
     sorteditem = sorted(event_list, cmp=_key_cmp1, reverse=True)
-    return sorteditem
+    current_cid = 0
+    for event in sorteditem:
+        if event[0]['cid'] != current_cid:
+            current_cid = event[0]['cid']
+            event_count = 0
+        if event_count < cids[current_cid]:
+            result_event.append(event)
+            event_count += 1
+#     result_event = sorted(result_event, key=lambda result:result[1], reverse=True)
+    result_event = sorted(result_event, cmp=_key_cmp1, reverse=True)
+    _LOGGER.debug('result events count: %s' % len(result_event))
+    return result_event
 
 def _process_hot_event(event, score, score_detail, time, db):
     '''
@@ -275,27 +315,27 @@ def main():
     global _EVENT_TIME_LINE
     hour = timer.localtime(timer.time()).tm_hour
     _EVENT_TIME_LINE = _EVENT_TIME_LINE * temp.hour_strategy[str(hour)]
-    start_time = int(timer.time() - _EVENT_TIME_LINE)
+    start_time = int(timer.time())
     while True:
-        events = _get_modified_events(start_time, db)
+        events = _get_train_modified_events(start_time, db)
         if len(events) <= _EVENT_MODIFY_COUNT:
-            start_time = start_time - 60 * 60
             _EVENT_TIME_LINE += 60 * 60
             continue
         else:
             break
-    print _EVENT_TIME_LINE
-    print start_time
-    print 'length %s' % len(events)
-    time = start_time * 1000 * 1000
-    sorted_events = _get_hot_event(events, time)
+
+    for event in events:
+        for info in event['infos']:
+            _LOGGER.debug(timer.localtime(info / 1000000))
+    _LOGGER.debug(start_time)
+    sorted_events = _get_hot_event(events, start_time)
     result = ''
     current_cid = 0
     for event in sorted_events:
         if event[0]['cid'] != current_cid:
                 current_cid = event[0]['cid']
                 result += '*' * 100 + '\n<br>'
-        result += _process_hot_event(event[0], event[1], event[2], time, db)
+        result += _process_hot_event(event[0], event[1], event[2], start_time, db)
         result += '\n<br>'
     print result
 
@@ -303,6 +343,8 @@ def main():
 
 if __name__ == '__main__':
     start = timer.time()
+    db = _connect(host='10.2.8.219')
+#     _get_train_modified_events(int(start), db)
     main()
     end = timer.time() - start 
     print 'process time: %s' % end
