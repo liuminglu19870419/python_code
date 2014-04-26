@@ -27,7 +27,7 @@ if __name__ == '__main__':
 #         print item
     key_word = []
     
-    infos = db.infos.find({"news.content":{"$regex":"(马航)"}, "eid":{'$exists':True}})
+    infos = db.infos.find({"news.content":{"$regex":"(岁月号)"}, "eid":{'$exists':True}})
     
     size = 0
     for info in infos:
