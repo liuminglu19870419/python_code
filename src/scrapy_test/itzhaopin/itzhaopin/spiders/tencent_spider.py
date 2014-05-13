@@ -1,20 +1,23 @@
-import re
 import json
-
-
+import re
+from scrapy.contrib.linkextractors.sgml import SgmlLinkExtractor as sle
+from scrapy.contrib.spiders import CrawlSpider, Rule
 from scrapy.selector import Selector
+from scrapy.utils.response import get_base_url
+from scrapy.utils.url import urljoin_rfc
+
+from itzhaopin.items import *
+from itzhaopin.misc.log import *
+from scrapy_test.itzhaopin.itzhaopin.items import TencentItem
+from scrapy_test.itzhaopin.itzhaopin.misc.log import info
+
+
 try:
     from scrapy.spider import Spider
 except:
     from scrapy.spider import BaseSpider as Spider
-from scrapy.utils.response import get_base_url
-from scrapy.utils.url import urljoin_rfc
-from scrapy.contrib.spiders import CrawlSpider, Rule
-from scrapy.contrib.linkextractors.sgml import SgmlLinkExtractor as sle
 
 
-from itzhaopin.items import *
-from itzhaopin.misc.log import *
 
 
 class TencentSpider(CrawlSpider):
